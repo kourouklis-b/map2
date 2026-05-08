@@ -300,7 +300,11 @@
             margin: 8px 0 2px; padding: 8px 12px; border-radius: 6px;
             background: #f0f6ff; border: 1px solid #c5d8f5;
             color: #378ADD; font-size: 12px; font-weight: 600;
-            text-decoration: none;
+            text-decoration: none; cursor: pointer; width: 100%;
+            transition: background .15s, border-color .15s, color .15s;
+        }
+        .pu-link-btn:hover {
+            background: #378ADD; border-color: #378ADD; color: #fff;
         }
 
         /* ── MARKER ── */
@@ -458,6 +462,7 @@
 <script src="js/leaflet.js"></script>
 <script src="data/railway_1.js"></script>
 <script src="data/ERGA_2.js"></script>
+    <script src="data/detail_data.js"></script>
 <script>
 
 var isMobile = window.innerWidth < 768;
@@ -638,7 +643,7 @@ function buildPopup(props, color) {
             h += '<div class="pu-alert"><span class="pu-alert-icon">⚠</span><p>' + item + '</p></div>';
         });
     }
-    h += '<button class="pu-link-btn" onclick="openDetail(' + props.id + ')">&#x2139; Περισσότερες πληροφορίες</button>';
+    h += '<button class="pu-link-btn" onclick="window.openDetail(' + props.id + ')">ℹ Περισσότερες πληροφορίες</button>';
     h += '</div>';
     return h;
 }
@@ -742,6 +747,7 @@ window.addEventListener('resize', function() {
 });
 
 window.doClose = doClose;
+
 window.toggleSidebar = toggleSidebar;
 window.toggleLegend = toggleLegend;
 </script>
@@ -763,196 +769,128 @@ window.toggleLegend = toggleLegend;
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-//  GOOGLE SHEETS — Spreadsheet ID + Tab GIDs
-// ═══════════════════════════════════════════════════════════════
-var GS_SHEET_ID = '1CPW1fU3CvDrluQ19GJzmkSSPUL8I8zuH';
-var GS_GIDS = ['999137185','163946633','480266231','807241592','1696343323'];
-
-// Αντιστοίχιση στηλών (0=A, 1=B, κλπ)
-var GS_COLS = {
-    seq_id:      0,   // A: Α/Α (αριθμός έργου στον πίνακα)
-    short_name:  1,   // B: Σύντομο Όνομα
-    title:       2,   // C: Τίτλος Έργου
-    network:     3,   // D: Κατηγορία Δικτύου
-    contractor:  4,   // E: Ανάδοχος / Φορέας Υλοποίησης
-    budg_fund:   5,   // F: Χρηματοδότηση Έργου
-    contract_a:  6,   // G: Ποσό Σύμβασης
-    sign_date:   7,   // H: Ημ. Υπογραφής Σύμβασης
-    deadline:    8,   // I: Προθεσμία Περαίωσης
-    extra:       9,   // J: —
-    descr:       10,  // K: Αντικείμενο
-    status:      11,  // L: Κατάσταση (πλήρες κείμενο)
-    critical:    12   // M: Κρίσιμα Θέματα & Ενέργειες
-};
-// ═══════════════════════════════════════════════════════════════
-
-var _sheetCache = {};
-
-// JSONP via gviz/tq — works from file:// without CORS issues
-function _fetchSheetGViz(gid) {
-    if (_sheetCache[gid]) return Promise.resolve(_sheetCache[gid]);
-    return new Promise(function(resolve, reject) {
-        var cbName = '_gsCb_' + gid;
-        var timer = setTimeout(function() {
-            delete window[cbName];
-            reject(new Error('timeout'));
-        }, 12000);
-        window[cbName] = function(resp) {
-            clearTimeout(timer);
-            delete window[cbName];
-            try {
-                var rows = _parseGViz(resp.table);
-                _sheetCache[gid] = rows;
-                resolve(rows);
-            } catch(e) { reject(e); }
-        };
-        var s = document.createElement('script');
-        s.src = 'https://docs.google.com/spreadsheets/d/' + GS_SHEET_ID +
-                '/gviz/tq?gid=' + gid + '&tqx=out:json;handler:' + cbName;
-        s.onerror = function() { clearTimeout(timer); delete window[cbName]; reject(new Error('load error')); };
-        document.head.appendChild(s);
-    });
-}
-
-function _parseGViz(table) {
-    if (!table || !table.rows) return [];
-    return table.rows.map(function(row) {
-        return (row.c || []).map(function(cell) {
-            if (!cell) return '';
-            // Use formatted value if available, else raw value
-            var v = cell.f !== undefined && cell.f !== null ? cell.f : (cell.v !== undefined && cell.v !== null ? cell.v : '');
-            return String(v).trim();
-        });
-    });
-}
-
-function _fetchAllSheets() {
-    return Promise.all(GS_GIDS.map(function(gid) {
-        return _fetchSheetGViz(gid).catch(function() { return []; });
-    }));
-}
-
-function _parseCSV(text) {
-    var rows = [], row = [], cell = '', inQ = false;
-    for (var i = 0; i < text.length; i++) {
-        var c = text[i];
-        if (inQ) {
-            if (c === '"' && text[i+1] === '"') { cell += '"'; i++; }
-            else if (c === '"') inQ = false;
-            else cell += c;
-        } else {
-            if (c === '"') inQ = true;
-            else if (c === ',') { row.push(cell.trim()); cell = ''; }
-            else if (c === '\n') { row.push(cell.trim()); rows.push(row); row = []; cell = ''; }
-            else if (c !== '\r') cell += c;
-        }
-    }
-    if (cell || row.length) { row.push(cell.trim()); rows.push(row); }
-    return rows;
-}
-
-function _findRow(rows, mapId, mapTitle) {
-    // 1. Match by seq_id in col A
-    var colId = GS_COLS.seq_id;
-    for (var i = 0; i < rows.length; i++) {
-        if (String(rows[i][colId]||'').trim() === String(mapId)) return rows[i];
-    }
-    // 2. Fallback: title similarity
-    var norm = function(s){ return (s||'').toUpperCase().replace(/[^Α-Ωα-ωA-Z0-9]/g,'').substring(0,40); };
-    var target = norm(mapTitle);
-    var colT = GS_COLS.title;
-    for (var j = 0; j < rows.length; j++) {
-        if (norm(rows[j][colT]||'') === target) return rows[j];
-    }
-    return null;
-}
-
-function _col(row, key) {
-    var idx = GS_COLS[key];
-    return (idx !== undefined && row[idx] !== undefined) ? row[idx].trim() : '';
-}
-
+// ─── detail popup ──────────────────────────────────────────────
 function openDetail(id) {
     var feat = features.find(function(x){ return x.properties.id == id; });
     if (!feat) return;
-    var p = feat.properties;
+    var p   = feat.properties;
     var cls = classify(p.fund_prog);
     var color = COLORS[cls];
+    var d = (typeof DETAIL_DATA !== 'undefined') ? (DETAIL_DATA[String(p.id)] || null) : null;
 
-    // Show modal with spinner
-    var mis = (p.mis_code && p.mis_code !== 'null' && p.mis_code.length < 30) ? p.mis_code : null;
-    document.getElementById('detail-id-row').textContent = 'α/α-' + p.id + (mis ? ' · MIS: ' + mis : '');
+    // Header
+    var mis = d ? (d.fields.find(function(f){return f.key==='mis_code';}) || null) : null;
+    var misVal = mis ? mis.value : (p.mis_code && p.mis_code !== 'null' ? p.mis_code : '');
+    document.getElementById('detail-id-row').textContent = 'α/α-' + p.id + (misVal ? ' · MIS: ' + misVal : '');
     document.getElementById('detail-title').textContent = (p.title||'').trim().toUpperCase();
     var progEl = document.getElementById('detail-prog');
-    progEl.textContent = (p.fund_prog||'').trim();
+    var sheetLabel = d ? d.sheet : (p.fund_prog||'');
+    progEl.textContent = sheetLabel;
     progEl.style.cssText = 'background:'+color+'22;color:'+color+';border:1px solid '+color+'55';
-    document.getElementById('detail-body').innerHTML =
-        '<div style="grid-column:1/-1;text-align:center;padding:48px 20px;color:#64748b">' +
-        '<div style="font-size:28px;margin-bottom:10px">⏳</div>' +
-        '<div style="font-size:13px">Φόρτωση από Google Sheets...</div></div>';
+
+    var b = '';
+    if (!d || !d.fields || d.fields.length === 0) {
+        b = _renderFallback(p, feat);
+    } else {
+        b = _renderFields(d, p, feat);
+    }
+
+    document.getElementById('detail-body').innerHTML = b;
     document.getElementById('detail-overlay').classList.add('show');
     document.body.style.overflow = 'hidden';
-
-    _fetchAllSheets()
-        .then(function(allSheets) {
-            var row = null;
-            for (var i = 0; i < allSheets.length; i++) {
-                row = _findRow(allSheets[i], p.id, p.title);
-                if (row) break;
-            }
-            if (row) _renderFromSheet(row, p, color);
-            else _renderFromErga(p, color);
-        })
-        .catch(function(err) {
-            console.warn('Sheet fetch error:', err);
-            _renderFromErga(p, color);
-        });
 }
 
-function _renderFromSheet(row, p, color) {
-    var c = function(k){ return _col(row, k); };
+function _renderFields(d, p, feat) {
     var b = '';
+    var fields = d.fields;
 
-    var descr = c('descr') || (p['descr/tion']||'');
-    if (descr) b += box('full', 'Αντικείμενο Έργου', '<p>'+esc(descr)+'</p>');
+    // Group fields by type for layout
+    var financial = fields.filter(function(f){ return f.type==='money'; });
+    var dates     = fields.filter(function(f){ return f.type==='date'; });
+    var codes     = fields.filter(function(f){ return f.type==='code' || f.type==='badge'; });
+    var phases    = fields.filter(function(f){ return f.type==='phase'; });
+    var longs     = fields.filter(function(f){ return f.type==='long'; });
+    var crits     = fields.filter(function(f){ return f.type==='critical'; });
+    var pcts_f    = fields.filter(function(f){ return f.type==='pct'; });
+    var contractor= fields.filter(function(f){ return f.key==='contractor'; });
+    var text_f    = fields.filter(function(f){ return f.type==='text' && f.key!=='title' && f.key!=='contractor'; });
 
-    var budg = c('budg_fund') || (p.budg_fund||'');
-    var contr = c('contract_a') || (p.contract_a||'');
-    if (budg)  b += box('', 'Χρηματοδότηση Έργου', '<p class="money">'+esc(budg)+'</p>');
-    if (contr) b += box('', 'Ποσό Σύμβασης', '<p class="money">'+esc(contr)+'</p>');
+    // Tab/program label
+    b += '<div style="grid-column:1/-1;background:#f0f5ff;border:1px solid #d0dff5;border-radius:6px;padding:8px 12px;font-size:11px;color:#2E75B6;font-weight:700;margin-bottom:4px">';
+    b += '📋 ' + esc(d.sheet);
+    b += '</div>';
 
-    var contractor = c('contractor') || (p.contractor||'');
-    if (contractor) b += box('full', 'Ανάδοχος / Φορέας Υλοποίησης', '<p>'+esc(contractor)+'</p>');
-
-    var sd = c('sign_date') || (p.sign_date||'');
-    var dl = c('deadline')  || (p.deadline||'');
-    if (sd) b += box('', 'Υπογραφή Σύμβασης', '<p>'+esc(sd)+'</p>');
-    if (dl) b += box('', 'Προθεσμία Περαίωσης', '<p>'+esc(dl)+'</p>');
-
-    var status = c('status') || (p.status||'');
-    if (status) {
-        var pcts = getPcts(status);
-        var sHtml = '<p>'+esc(status)+'</p>';
-        if (pcts.length > 0) sHtml += '<div class="pct-wrap">'+buildPctGraphic(pcts, p.pct_labels||null)+'</div>';
-        b += box('full', 'Κατάσταση Υλοποίησης', sHtml);
+    // Contractor
+    if (contractor.length) {
+        b += box('full', contractor[0].label, '<p>'+esc(contractor[0].value)+'</p>');
     }
 
-    var crit = c('critical') || (p.critical_i||'');
-    if (crit) {
-        var items = crit.split(/\n/).map(function(s){return s.trim();}).filter(Boolean);
-        b += '<div class="dl-box critical"><label>Κρίσιμα Θέματα &amp; Ενέργειες</label>' +
+    // Codes/badges (network, invitation, program)
+    codes.filter(function(f){return f.key!=='mis_code';}).forEach(function(f){
+        b += box('', f.label, '<p>'+esc(f.value)+'</p>');
+    });
+
+    // Pct funding
+    if (pcts_f.length) {
+        pcts_f.forEach(function(f){ b += box('', f.label, '<p style="font-size:18px;font-weight:700;color:#2E75B6">'+esc(f.value)+'</p>'); });
+    }
+
+    // Financial grid
+    if (financial.length) {
+        financial.forEach(function(f){
+            b += box('', f.label, '<p class="money">'+esc(f.value)+'</p>');
+        });
+    }
+
+    // Dates
+    if (dates.length) {
+        dates.forEach(function(f){
+            b += box('', f.label, '<p>'+esc(f.value)+'</p>');
+        });
+    }
+
+    // Phase
+    if (phases.length) {
+        var phaseVal = phases[0].value;
+        var phaseColor = phaseVal.indexOf('Ολοκλ') >= 0 ? '#16a34a' : (phaseVal.indexOf('εξέλ') >= 0 || phaseVal.indexOf('κατ') >= 0 ? '#2E75B6' : '#d97706');
+        b += box('full', phases[0].label,
+            '<span style="background:'+phaseColor+'1a;color:'+phaseColor+';border:1.5px solid '+phaseColor+'66;padding:4px 14px;border-radius:20px;font-weight:700;font-size:13px">'+esc(phaseVal)+'</span>');
+    }
+
+    // Other text fields
+    text_f.forEach(function(f){
+        b += box('', f.label, '<p>'+esc(f.value)+'</p>');
+    });
+
+    // Ποσοστό υλοποίησης from ERGA_2 (donut)
+    var statusSrc = p.status || '';
+    longs.forEach(function(f){ if (f.key==='status' || f.key==='descr') statusSrc = f.value; });
+    var pcts = getPcts(statusSrc);
+
+    // Long text fields
+    var longCount = longs.length;
+    longs.forEach(function(f, li){
+        var html = '<p>'+esc(f.value)+'</p>';
+        // Show pct donuts only on the LAST long field (Σχόλια/Κατάσταση), not on Αντικείμενο
+        if (li === longCount - 1 && pcts.length > 0) {
+            html += '<div class="pct-wrap">'+buildPctGraphic(pcts, p.pct_labels||null)+'</div>';
+        }
+        b += box('full', f.label, html);
+    });
+
+    // Critical items
+    crits.forEach(function(f){
+        var items = f.value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+        b += '<div class="dl-box critical"><label>'+esc(f.label)+'</label>' +
             items.map(function(it){
-                return '<div class="dl-alert"><span class="dl-alert-icon">⚠</span><p>'+esc(it)+'</p></div>';
+                return '<div class="dl-alert"><span class="dl-alert-icon">&#9888;</span><p>'+esc(it)+'</p></div>';
             }).join('') + '</div>';
-    }
+    });
 
-    if (!b) b = '<div style="grid-column:1/-1;padding:20px;color:#64748b">Δεν βρέθηκαν δεδομένα για αυτό το έργο.</div>';
-    document.getElementById('detail-body').innerHTML = b;
+    return b || '<div style="padding:20px;color:#94a3b8;text-align:center">Δεν βρέθηκαν δεδομένα.</div>';
 }
 
-function _renderFromErga(p, color) {
-    // Fallback: render from ERGA_2.js local data
+function _renderFallback(p, feat) {
     var b = '';
     if (p['descr/tion']) b += box('full','Αντικείμενο Έργου','<p>'+esc(p['descr/tion'])+'</p>');
     if (p.budg_fund)  b += box('','Χρηματοδότηση Έργου','<p class="money">'+esc(p.budg_fund)+'</p>');
@@ -967,14 +905,13 @@ function _renderFromErga(p, color) {
         b += box('full','Κατάσταση Υλοποίησης', sHtml);
     }
     if (p.critical_i) {
-        var items = p.critical_i.trim().split(/\n/).map(function(s){return s.trim();}).filter(Boolean);
+        var items = p.critical_i.split('\n').map(function(s){return s.trim();}).filter(Boolean);
         b += '<div class="dl-box critical"><label>Κρίσιμα Θέματα &amp; Ενέργειες</label>' +
             items.map(function(it){
-                return '<div class="dl-alert"><span class="dl-alert-icon">⚠</span><p>'+esc(it)+'</p></div>';
+                return '<div class="dl-alert"><span class="dl-alert-icon">&#9888;</span><p>'+esc(it)+'</p></div>';
             }).join('') + '</div>';
     }
-    b += '<div style="grid-column:1/-1;padding:8px 0 0"><small style="color:#94a3b8;font-size:10px">⚠ Φόρτωση από τοπικά δεδομένα (το Google Sheet δεν ήταν προσβάσιμο)</small></div>';
-    document.getElementById('detail-body').innerHTML = b;
+    return b;
 }
 
 function closeDetail() {
@@ -982,8 +919,7 @@ function closeDetail() {
     document.body.style.overflow = '';
 }
 function box(cls, label, content) {
-    return '<div class="dl-box'+(cls?' '+cls:'')+'">' +
-           '<label>'+label+'</label>'+content+'</div>';
+    return '<div class="dl-box'+(cls?' '+cls:'')+'">'+'<label>'+label+'</label>'+content+'</div>';
 }
 function esc(str) {
     return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');

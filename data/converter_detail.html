@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<title>Excel → detail_data.js | ΕΔΥΜΕΤ</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f0f4f8;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px}
+.card{background:#fff;border-radius:14px;box-shadow:0 4px 24px rgba(30,58,95,.10);padding:32px 38px;max-width:680px;width:100%}
+h1{font-size:20px;color:#1E3A5F;font-weight:700;margin-bottom:4px}
+.sub{font-size:12px;color:#64748b;margin-bottom:20px}
+.how{background:#f0f7ff;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:12px;color:#334155;line-height:1.9}
+.how strong{color:#1E3A5F}
+.drop-zone{border:2.5px dashed #2E75B6;border-radius:10px;padding:28px;text-align:center;cursor:pointer;background:#f7fbff;transition:.2s;margin-bottom:12px}
+.drop-zone:hover,.drop-zone.drag{background:#e8f2fc}
+.drop-zone p{color:#1E3A5F;font-weight:600;font-size:14px;margin-top:8px}
+.drop-zone small{color:#94a3b8;font-size:12px}
+input[type=file]{display:none}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;background:#1E3A5F;color:#fff;border:none;border-radius:8px;padding:13px 26px;font-size:14px;font-weight:700;cursor:pointer;width:100%;transition:.2s}
+.btn:hover{background:#2E75B6}.btn:disabled{background:#94a3b8;cursor:not-allowed}
+.status{margin-top:12px;padding:11px 14px;border-radius:8px;font-size:12.5px;display:none}
+.ok{background:#dcfce7;color:#166534;border:1px solid #86efac;display:block}
+.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;display:block}
+.info{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;display:block}
+.preview{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:11px;max-height:220px;overflow-y:auto;margin-top:10px;display:none}
+table{width:100%;border-collapse:collapse}
+th{background:#1E3A5F;color:#fff;padding:4px 8px;font-size:10px;text-align:left}
+td{padding:3px 8px;border-bottom:1px solid #e2e8f0;font-size:10px;vertical-align:top}
+tr:nth-child(even) td{background:#f0f5fb}
+.badge{display:inline-block;padding:1px 7px;border-radius:4px;font-size:10px;font-weight:700;color:#fff}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📋 Excel → detail_data.js</h1>
+  <div class="sub">Ενημέρωση αναλυτικών στοιχείων έργων (popup "Περισσότερες πληροφορίες")</div>
+  <div class="how">
+    <strong>Οδηγίες:</strong><br>
+    1. Άνοιξε το <strong>detail_data.xlsx</strong> και κάνε τις αλλαγές σου<br>
+    2. Κάθε tab αντιστοιχεί σε ένα πρόγραμμα (ΕΠ ΥΜΕΠΕΡΑΑ, ΜΕΤΑΦΟΡΕΣ, CEF 14 20, CEF 21 27, ΠεΠ)<br>
+    3. Ανέβασε το αρχείο παρακάτω και κατέβασε το <strong>detail_data.js</strong><br>
+    4. Αντικατέστησε το αρχείο στον φάκελο <strong>data/</strong>
+  </div>
+
+  <div class="drop-zone" id="dz">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="#2E75B6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+    <p>Σύρε το detail_data.xlsx ή κάνε κλικ</p>
+    <small>.xlsx αρχείο</small>
+    <input type="file" id="fi" accept=".xlsx,.xls">
+  </div>
+  <div class="preview" id="prev"></div>
+  <button class="btn" id="btn" disabled>⬇ Κατέβασε detail_data.js</button>
+  <div class="status" id="st"></div>
+</div>
+
+<script>
+var dz=document.getElementById('dz'),fi=document.getElementById('fi'),btn=document.getElementById('btn'),st=document.getElementById('st'),prev=document.getElementById('prev');
+var parsedData=null;
+dz.addEventListener('click',function(){fi.click()});
+dz.addEventListener('dragover',function(e){e.preventDefault();dz.classList.add('drag')});
+dz.addEventListener('dragleave',function(){dz.classList.remove('drag')});
+dz.addEventListener('drop',function(e){e.preventDefault();dz.classList.remove('drag');load(e.dataTransfer.files[0])});
+fi.addEventListener('change',function(e){load(e.target.files[0])});
+function ss(msg,cls){st.textContent=msg;st.className='status '+cls}
+
+// Column-to-field mapping for each sheet
+var FIELD_TYPES = {
+    'Κωδικός ΑΠ / ΟΠΣ':'code','Κωδικός Προτεραιότητας / ΟΠΣ':'code','Κωδικός GA / ΟΠΣ':'code','Κωδικός ΟΠΣ':'code','Κωδικός MIS':'code',
+    'Τίτλος Έργου':'text','Τίτλος Έργου (GA)':'text','ΔΕΔ-Μ':'badge',
+    'Δικαιούχος':'text','Ανάδοχος':'text',
+    'Π/Υ Ένταξης Πράξης (Συγχρημ. ΔΔ)':'money','Π/Υ Ένταξης Πράξης (Επιλέξιμη ΔΔ)':'money',
+    'Συγχρηματοδοτούμενη ΔΔ Πράξης':'money','Επιλέξιμη ΔΔ Πράξης':'money','Π/Υ Ένταξης (Επιλέξιμη ΔΔ)':'money','Χρηματοδότηση':'money','Ποσό Σύμβασης':'money',
+    'Νομικές Δεσμεύσεις (Συγχρημ. ΔΔ)':'money','Νομικές Δεσμεύσεις (Επιλέξιμη ΔΔ)':'money','Νομικές Δεσμεύσεις (Επιλ. ΔΔ)':'money','Νομικές Δεσμεύσεις (Συγχρ. ΔΔ)':'money',
+    'Πληρωμές (Συγχρημ. ΔΔ) [07.04.2026]':'money','Πληρωμές (Επιλέξιμη ΔΔ) [07.04.2026]':'money','Πληρωμές (Συγχρ. ΔΔ) [07.04.2026]':'money','Δαπάνες (Επιλέξιμη ΔΔ) [07.04.2026]':'money',
+    'Ημ/νία Ένταξης Πράξης':'date','Ημ/νία Έναρξης GA':'date','Ημ/νία Λήξης GA':'date','Ημ/νία Έναρξης':'date',
+    'Ημερομηνία Ολοκλήρωσης Κυρίου Υποέργου':'date','Ημ/νία Ολοκλήρωσης Κυρίου Υποέργου':'date','Ημ/νία Ολοκλήρωσης':'date','Ημερομηνία Ολοκλήρωσης':'date','Προθεσμία':'date','Υπογραφή Σύμβασης':'date',
+    'Φάση Κυρίου Υποέργου':'phase','Φάση Έργου':'phase','Κατάσταση':'phase',
+    'Ποσοστό Χρηματοδότησης (%)':'pct',
+    'Πρόσκληση CEF 2021-2027':'code','Πρόγραμμα':'code',
+    'Αντικείμενο':'long','Αντικείμενο / Σχόλια':'long','Σχόλια':'long','Κατάσταση / Σχόλια':'long',
+    'Άμεσες Ενέργειες':'critical','Κρίσιμα Θέματα':'critical'
+};
+var KEY_MAP = {
+    'Κωδικός ΑΠ / ΟΠΣ':'mis_code','Κωδικός Προτεραιότητας / ΟΠΣ':'mis_code','Κωδικός GA / ΟΠΣ':'mis_code','Κωδικός ΟΠΣ':'mis_code','Κωδικός MIS':'mis_code',
+    'Τίτλος Έργου':'title','Τίτλος Έργου (GA)':'title','ΔΕΔ-Μ':'network',
+    'Δικαιούχος':'contractor','Ανάδοχος':'contractor',
+    'Π/Υ Ένταξης Πράξης (Συγχρημ. ΔΔ)':'budg_fund','Π/Υ Ένταξης Πράξης (Επιλέξιμη ΔΔ)':'budg_fund',
+    'Συγχρηματοδοτούμενη ΔΔ Πράξης':'budg_fund','Επιλέξιμη ΔΔ Πράξης':'budg_fund','Π/Υ Ένταξης (Επιλέξιμη ΔΔ)':'budg_fund','Χρηματοδότηση':'budg_fund','Ποσό Σύμβασης':'contract_a',
+    'Νομικές Δεσμεύσεις (Συγχρημ. ΔΔ)':'legal_commit','Νομικές Δεσμεύσεις (Επιλέξιμη ΔΔ)':'legal_commit','Νομικές Δεσμεύσεις (Επιλ. ΔΔ)':'legal_commit','Νομικές Δεσμεύσεις (Συγχρ. ΔΔ)':'legal_commit',
+    'Πληρωμές (Συγχρημ. ΔΔ) [07.04.2026]':'payments','Πληρωμές (Επιλέξιμη ΔΔ) [07.04.2026]':'payments','Πληρωμές (Συγχρ. ΔΔ) [07.04.2026]':'payments','Δαπάνες (Επιλέξιμη ΔΔ) [07.04.2026]':'payments',
+    'Ημ/νία Ένταξης Πράξης':'entry_date','Ημ/νία Έναρξης GA':'sign_date','Ημ/νία Λήξης GA':'deadline','Ημ/νία Έναρξης':'sign_date',
+    'Ημερομηνία Ολοκλήρωσης Κυρίου Υποέργου':'deadline','Ημ/νία Ολοκλήρωσης Κυρίου Υποέργου':'deadline','Ημ/νία Ολοκλήρωσης':'deadline','Ημερομηνία Ολοκλήρωσης':'deadline','Προθεσμία':'deadline','Υπογραφή Σύμβασης':'sign_date',
+    'Φάση Κυρίου Υποέργου':'phase','Φάση Έργου':'phase','Κατάσταση':'phase',
+    'Ποσοστό Χρηματοδότησης (%)':'funding_pct',
+    'Πρόσκληση CEF 2021-2027':'invitation','Πρόγραμμα':'program',
+    'Αντικείμενο':'descr','Αντικείμενο / Σχόλια':'status','Σχόλια':'status','Κατάσταση / Σχόλια':'status',
+    'Άμεσες Ενέργειες':'critical_i','Κρίσιμα Θέματα':'critical_i'
+};
+
+function load(file){
+    ss('Φόρτωση...','info');
+    var r=new FileReader();
+    r.onload=function(e){
+        try{
+            var wb=XLSX.read(e.target.result,{type:'array',cellDates:true,dateNF:'DD.MM.YYYY'});
+            parsedData={};
+            var total=0;
+            var previewRows=[];
+            var PROG_COLORS={'ΕΠ ΥΜΕΠΕΡΑΑ':'#0ea5e9','ΜΕΤΑΦΟΡΕΣ':'#22c55e','CEF 14 20':'#a855f7','CEF 21 27':'#f97316','ΠεΠ 2021-2027':'#6b7280'};
+
+            wb.SheetNames.forEach(function(sheetName){
+                var ws=wb.Sheets[sheetName];
+                var all=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false});
+                if(all.length<3) return;
+                var hdr=all[1]; // row 2 = headers
+                var dataRows=all.slice(2).filter(function(r){return r[0]&&String(r[0]).trim()!==''});
+
+                dataRows.forEach(function(row){
+                    var pid=String(row[0]).trim();
+                    if(!pid||isNaN(parseInt(pid))) return;
+                    var sheetTab=String(row[1]||sheetName).trim();
+                    var fields=[];
+                    for(var ci=2;ci<hdr.length;ci++){
+                        var label=String(hdr[ci]||'').trim();
+                        var val=String(row[ci]||'').trim();
+                        if(!label||!val) continue;
+                        var key=KEY_MAP[label]||label.toLowerCase().replace(/[^a-z0-9]/g,'_');
+                        var type=FIELD_TYPES[label]||'text';
+                        fields.push({key:key,label:label,value:val,type:type});
+                    }
+                    parsedData[pid]={sheet:sheetTab,fields:fields};
+                    total++;
+                    if(previewRows.length<8) previewRows.push({pid:pid,sheet:sheetTab,fields:fields});
+                });
+            });
+
+            prev.style.display='block';
+            prev.innerHTML='<p style="margin-bottom:6px;font-weight:700;color:#1E3A5F">✅ Βρέθηκαν <strong>'+total+'</strong> έργα</p>'+
+                '<table><thead><tr><th>ID</th><th>Πρόγραμμα</th><th>Τίτλος</th><th>Φάση</th></tr></thead><tbody>'+
+                previewRows.map(function(r){
+                    var col=PROG_COLORS[r.sheet]||'#64748b';
+                    var title=(r.fields.find(function(f){return f.key==='title';})||{value:''}).value.substring(0,40);
+                    var phase=(r.fields.find(function(f){return f.key==='phase';})||{value:'—'}).value.substring(0,25);
+                    return '<tr><td><b style="color:'+col+'">'+r.pid+'</b></td>'+
+                        '<td><span class="badge" style="background:'+col+'">'+r.sheet.substring(0,12)+'</span></td>'+
+                        '<td>'+title+'…</td><td>'+phase+'</td></tr>';
+                }).join('')+'</tbody></table>';
+
+            btn.disabled=false;
+            ss('Φορτώθηκαν '+total+' έργα από '+wb.SheetNames.length+' tabs.','ok');
+        }catch(ex){ss('Σφάλμα: '+ex.message,'err');console.error(ex)}
+    };
+    r.readAsArrayBuffer(file);
+}
+
+btn.addEventListener('click',function(){
+    if(!parsedData) return;
+    var js='var DETAIL_DATA = '+JSON.stringify(parsedData,null,2)+';\n';
+    var blob=new Blob([js],{type:'text/javascript'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='detail_data.js'; a.click();
+    ss('✅ Κατεβάζεται το detail_data.js. Βάλε το στον φάκελο data/.','ok');
+});
+</script>
+</body>
+</html>

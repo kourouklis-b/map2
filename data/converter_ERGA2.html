@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<title>Excel → ERGA_2.js | ΕΔΥΜΕΤ</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;background:#f0f4f8;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px}
+.card{background:#fff;border-radius:14px;box-shadow:0 4px 24px rgba(30,58,95,.10);padding:32px 38px;max-width:680px;width:100%}
+h1{font-size:20px;color:#1E3A5F;font-weight:700;margin-bottom:4px}
+.sub{font-size:12px;color:#64748b;margin-bottom:20px}
+.how{background:#f0f7ff;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:12px;color:#334155;line-height:1.9}
+.how strong{color:#1E3A5F}
+.drop-zone{border:2.5px dashed #2E75B6;border-radius:10px;padding:28px;text-align:center;cursor:pointer;background:#f7fbff;transition:.2s;margin-bottom:12px}
+.drop-zone:hover,.drop-zone.drag{background:#e8f2fc}
+.drop-zone p{color:#1E3A5F;font-weight:600;font-size:14px;margin-top:8px}
+.drop-zone small{color:#94a3b8;font-size:12px}
+input[type=file]{display:none}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;background:#1E3A5F;color:#fff;border:none;border-radius:8px;padding:13px 26px;font-size:14px;font-weight:700;cursor:pointer;width:100%;transition:.2s}
+.btn:hover{background:#2E75B6}.btn:disabled{background:#94a3b8;cursor:not-allowed}
+.status{margin-top:12px;padding:11px 14px;border-radius:8px;font-size:12.5px;display:none}
+.ok{background:#dcfce7;color:#166534;border:1px solid #86efac;display:block}
+.err{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;display:block}
+.info{background:#dbeafe;color:#1d4ed8;border:1px solid #93c5fd;display:block}
+.preview{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:11px;max-height:200px;overflow-y:auto;margin-top:10px;display:none}
+table{width:100%;border-collapse:collapse}
+th{background:#1E3A5F;color:#fff;padding:4px 8px;font-size:10px;text-align:left}
+td{padding:3px 8px;border-bottom:1px solid #e2e8f0;font-size:10px;vertical-align:top;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:nth-child(even) td{background:#f0f5fb}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🗺 Excel → ERGA_2.js</h1>
+  <div class="sub">Ενημέρωση δεδομένων χάρτη (markers, ποσοστά, στοιχεία έργων)</div>
+  <div class="how">
+    <strong>Οδηγίες:</strong><br>
+    1. Άνοιξε το <strong>ERGA_2_data.xlsx</strong> και κάνε τις αλλαγές σου<br>
+    2. Ανέβασε το αρχείο παρακάτω<br>
+    3. Κατέβασε το <strong>ERGA_2.js</strong> και αντικατέστησε το στον φάκελο <strong>data/</strong><br>
+    ⚠ Μην αλλάζεις τις στήλες <strong>lat / lng</strong> (γεωγραφικές συντεταγμένες)
+  </div>
+
+  <div class="drop-zone" id="dz">
+    <svg width="34" height="34" viewBox="0 0 24 24" fill="#2E75B6"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+    <p>Σύρε το ERGA_2_data.xlsx ή κάνε κλικ</p>
+    <small>.xlsx αρχείο</small>
+    <input type="file" id="fi" accept=".xlsx,.xls">
+  </div>
+  <div class="preview" id="prev"></div>
+  <button class="btn" id="btn" disabled>⬇ Κατέβασε ERGA_2.js</button>
+  <div class="status" id="st"></div>
+</div>
+
+<script>
+var dz=document.getElementById('dz'),fi=document.getElementById('fi'),btn=document.getElementById('btn'),st=document.getElementById('st'),prev=document.getElementById('prev');
+var parsed=null;
+dz.addEventListener('click',function(){fi.click()});
+dz.addEventListener('dragover',function(e){e.preventDefault();dz.classList.add('drag')});
+dz.addEventListener('dragleave',function(){dz.classList.remove('drag')});
+dz.addEventListener('drop',function(e){e.preventDefault();dz.classList.remove('drag');load(e.dataTransfer.files[0])});
+fi.addEventListener('change',function(e){load(e.target.files[0])});
+function ss(msg,cls){st.textContent=msg;st.className='status '+cls}
+
+function load(file){
+    ss('Φόρτωση...','info');
+    var r=new FileReader();
+    r.onload=function(e){
+        try{
+            var wb=XLSX.read(e.target.result,{type:'array',cellDates:true,dateNF:'DD.MM.YYYY'});
+            var ws=wb.Sheets[wb.SheetNames[0]];
+            var all=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false});
+            var hdr=all[1]; // row 2 = headers
+            var data=all.slice(2).filter(function(r){return r[0]&&r[0]!==''});
+            
+            parsed=data.map(function(row){
+                var obj={};
+                hdr.forEach(function(h,i){obj[h]=String(row[i]||'').trim()});
+                return obj;
+            });
+            
+            prev.style.display='block';
+            prev.innerHTML='<p style="margin-bottom:6px;font-weight:700;color:#1E3A5F">✅ Φορτώθηκαν '+parsed.length+' έργα</p>'+
+                '<table><thead><tr><th>ID</th><th>Σύντομο Όνομα</th><th>Πρόγραμμα</th><th>Κατάσταση %</th></tr></thead><tbody>'+
+                parsed.slice(0,6).map(function(p){return '<tr><td><b>'+p['ID']+'</b></td><td>'+p['Σύντομο Όνομα']+'</td><td>'+(p['Πρόγραμμα']||'').substring(0,20)+'</td><td>'+(p['Κατάσταση / Ποσοστά %']||'').substring(0,30)+'</td></tr>'}).join('')+
+                (parsed.length>6?'<tr><td colspan="4" style="color:#94a3b8">...+'+(parsed.length-6)+' ακόμη</td></tr>':'')+
+                '</tbody></table>';
+            btn.disabled=false;
+            ss('Έτοιμο! Πάτα το κουμπί.','ok');
+        }catch(ex){ss('Σφάλμα: '+ex.message,'err');console.error(ex)}
+    };
+    r.readAsArrayBuffer(file);
+}
+
+btn.addEventListener('click',function(){
+    if(!parsed) return;
+    try{
+        var CRS={type:'name',properties:{name:'urn:ogc:def:crs:OGC:1.3:CRS84'}};
+        var features=parsed.map(function(row){
+            var lat=parseFloat((row['Γεωγρ. Πλάτος']||'').replace(',','.'))||0;
+            var lng=parseFloat((row['Γεωγρ. Μήκος']||'').replace(',','.'))||0;
+            var labels=[row['Ετικέτα % 1'],row['Ετικέτα % 2'],row['Ετικέτα % 3']].filter(function(x){return x&&x.trim()!==''});
+            return{
+                type:'Feature',
+                properties:{
+                    id:row['ID'], 'name ID':row['Σύντομο Όνομα'],
+                    title:row['Τίτλος Έργου'], mis_code:row['Κωδικός MIS']||null,
+                    fund_prog:row['Πρόγραμμα'], 'descr/tion':row['Αντικείμενο']||null,
+                    budg_fund:row['Χρηματοδότηση']||null, contract_a:row['Ποσό Σύμβασης']||null,
+                    contractor:row['Ανάδοχος']||null, sign_date:row['Ημ. Υπογραφής']||null,
+                    deadline:row['Προθεσμία']||null, status:row['Κατάσταση / Ποσοστά %']||null,
+                    critical_i:row['Κρίσιμα Θέματα']||null, link:row['Link']||null,
+                    pct_labels:labels.length>0?labels:null
+                },
+                geometry:{type:'Point',coordinates:[lng,lat]}
+            };
+        });
+        var geojson={type:'FeatureCollection',name:'ERGA_2',crs:CRS,features:features};
+        var js='var json_ERGA_2 = '+JSON.stringify(geojson,null,2)+';';
+        var blob=new Blob([js],{type:'text/javascript'});
+        var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+        a.download='ERGA_2.js'; a.click();
+        ss('✅ Κατεβάζεται το ERGA_2.js με '+features.length+' έργα. Βάλε το στον φάκελο data/.','ok');
+    }catch(ex){ss('Σφάλμα: '+ex.message,'err');console.error(ex)}
+});
+</script>
+</body>
+</html>
